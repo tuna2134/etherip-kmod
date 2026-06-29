@@ -515,7 +515,7 @@ static void __exit etherip6_exit(void)
 module_init(etherip6_init);
 module_exit(etherip6_exit);
 
-MODULE_AUTHOR("Codex");
+MODULE_AUTHOR("Masato Kikuchi");
 MODULE_DESCRIPTION("RFC3378 EtherIP tunnel endpoint over IPv6");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_RTNL_LINK("etherip6");
