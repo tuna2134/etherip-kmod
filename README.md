@@ -1,33 +1,26 @@
 # etherip-kmod
+Linuxで使えるEtherIP(RFC3378)のためのカーネルモジュール
 
-Out-of-tree Linux kernel module for RFC3378 EtherIP over IPv6 endpoints.
+## 注意
+Codex GPT-5.5を用いて開発し、途中から人間の手を入れてデバッグ作業を行いました。
 
-The module registers a rtnetlink link kind named `etherip6`.  A companion
-`etherip6ctl` helper is included because stock iproute2 does not know how to
-encode this module's private tunnel attributes.
+粗削りなところは否めないため、自己責任でお願いします。
 
-## Build
-
-On Arch Linux, install headers matching the kernel you will load into:
+## ビルド
+Arch Linuxの場合
 
 ```sh
 sudo pacman -S linux-headers
 make
 ```
 
-If you need to build against a specific headers tree:
-
-```sh
-make KDIR=/usr/lib/modules/$(uname -r)/build
-```
-
-## Load
+## ロード
 
 ```sh
 sudo insmod etherip6.ko
 ```
 
-## Create a Tunnel
+## トンネルの作成
 
 ```sh
 sudo ./etherip6ctl add eip0 local 2001:db8:1::1 remote 2001:db8:1::2
@@ -35,47 +28,14 @@ sudo ip link set eip0 up
 sudo ip addr add 192.0.2.1/30 dev eip0
 ```
 
-For link-local IPv6 endpoints, specify the egress interface:
+例：
 
 ```sh
-sudo ./etherip6ctl add eip0 local fe80::1 remote fe80::2 link eth0
+sudo ./etherip6ctl add eip0 local 2001:db8::1 remote 2001:db8::2 link eth0
 ```
 
-Delete the device with:
+デバイスの削除：
 
 ```sh
 sudo ./etherip6ctl del eip0
 ```
-
-## Fragmentation
-
-The transmit path permits local IPv6 fragmentation for encapsulated EtherIP
-packets that exceed the outer path MTU.  This lets a larger inner Ethernet
-frame be split into multiple outer IPv6 fragments by the local host.
-
-The device default MTU is 1500, but the module allows an overlay MTU up to
-9000.  For example, with a 1500-byte underlay and a 9000-byte overlay:
-
-```sh
-sudo ip link set eip0 mtu 9000
-```
-
-An inner 9000-byte payload is carried as a 9014-byte Ethernet frame, plus the
-2-byte EtherIP header and 40-byte outer IPv6 header.  The local IPv6 stack
-fragments that outer packet before transmission, and the peer must reassemble
-the IPv6 fragments before EtherIP decapsulation.
-
-You can still set a smaller tunnel MTU when you want to avoid IPv6 fragments:
-
-```sh
-sudo ip link set eip0 mtu 1444
-```
-
-For a 1500-byte outer link, 1444 leaves room for the 40-byte IPv6 header,
-2-byte EtherIP header, and 14-byte Ethernet header carried inside EtherIP.
-
-## Wire Format
-
-The outer IPv6 packet uses Next Header 97.  The EtherIP header is the RFC3378
-two-byte version/reserved field with version 3, followed by the complete
-Ethernet frame.
