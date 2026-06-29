@@ -245,7 +245,7 @@ static void etherip6_setup(struct net_device *dev)
 	dev->netdev_ops = &etherip6_netdev_ops;
 	dev->needs_free_netdev = true;
 	dev->type = ARPHRD_ETHER;
-	dev->flags |= IFF_NOARP;
+	dev->flags &= ~IFF_NOARP;
 	dev->features &= ~(NETIF_F_GSO_MASK | NETIF_F_CSUM_MASK);
 	dev->hw_features = 0;
 	dev->vlan_features = 0;
