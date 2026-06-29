@@ -1,0 +1,1 @@
+sudo ./etherip6ctl add eip0 local 2402:2f60:500:beef:be24:11ff:fe12:d655 remote 2401:5e40:1:462:6709:e050:dcc5:d592
