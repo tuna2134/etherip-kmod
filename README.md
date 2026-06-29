@@ -53,6 +53,18 @@ The transmit path permits local IPv6 fragmentation for encapsulated EtherIP
 packets that exceed the outer path MTU.  This lets a larger inner Ethernet
 frame be split into multiple outer IPv6 fragments by the local host.
 
+The device default MTU is 1500, but the module allows an overlay MTU up to
+9000.  For example, with a 1500-byte underlay and a 9000-byte overlay:
+
+```sh
+sudo ip link set eip0 mtu 9000
+```
+
+An inner 9000-byte payload is carried as a 9014-byte Ethernet frame, plus the
+2-byte EtherIP header and 40-byte outer IPv6 header.  The local IPv6 stack
+fragments that outer packet before transmission, and the peer must reassemble
+the IPv6 fragments before EtherIP decapsulation.
+
 You can still set a smaller tunnel MTU when you want to avoid IPv6 fragments:
 
 ```sh

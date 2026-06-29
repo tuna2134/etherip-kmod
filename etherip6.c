@@ -31,6 +31,7 @@
 #define ETHERIP6_HDR htons(ETHERIP6_VERSION << 12)
 #define ETHERIP6_HLEN 2
 #define ETHERIP6_DEFAULT_HOP_LIMIT 64
+#define ETHERIP6_MAX_MTU 9000
 
 struct etherip6_tunnel {
 	struct list_head list;
@@ -250,7 +251,7 @@ static void etherip6_setup(struct net_device *dev)
 	dev->hw_features = 0;
 	dev->vlan_features = 0;
 	dev->min_mtu = ETH_MIN_MTU;
-	dev->max_mtu = ETH_DATA_LEN;
+	dev->max_mtu = ETHERIP6_MAX_MTU;
 	eth_hw_addr_random(dev);
 }
 
