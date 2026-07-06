@@ -5,6 +5,7 @@
 #include <linux/in6.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
+#include <linux/if_vlan.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -14,12 +15,17 @@
 #include <linux/rculist.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
+#include <linux/tcp.h>
+#include <linux/unaligned.h>
+#include <net/checksum.h>
+#include <net/ip.h>
 #include <net/ip6_route.h>
 #include <net/ipv6.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 #include <net/protocol.h>
 #include <net/rtnetlink.h>
+#include <net/tcp.h>
 
 #include "etherip6_uapi.h"
 
@@ -32,6 +38,9 @@
 #define ETHERIP6_HLEN 2
 #define ETHERIP6_DEFAULT_HOP_LIMIT 64
 #define ETHERIP6_MAX_MTU 9000
+
+/* IPv6 + EtherIP headers added outside the encapsulated Ethernet frame. */
+#define ETHERIP6_OUTER_HLEN (sizeof(struct ipv6hdr) + ETHERIP6_HLEN)
 
 struct etherip6_tunnel {
 	struct list_head list;
@@ -140,6 +149,110 @@ static struct etherip6_tunnel *etherip6_lookup_rx(struct net *net,
 	return etherip6_lookup_unique_rx(net, local, remote, iif, false, false);
 }
 
+static void etherip6_clamp_tcp_mss(struct sk_buff *skb, unsigned int path_mtu)
+{
+	struct vlan_hdr _vh, *vh;
+	struct tcphdr _th, *th;
+	struct ethhdr _eth, *eth;
+	unsigned int nhoff = ETH_HLEN;
+	unsigned int thoff, tcp_hlen;
+	unsigned int inner_mtu;
+	unsigned int min_ip_hlen;
+	unsigned char *opt;
+	unsigned int optlen;
+	__be16 proto;
+	u16 old_mss, new_mss;
+	u8 nexthdr;
+
+	eth = skb_header_pointer(skb, 0, sizeof(_eth), &_eth);
+	if (!eth)
+		return;
+	proto = eth->h_proto;
+
+	while (eth_type_vlan(proto)) {
+		vh = skb_header_pointer(skb, nhoff, sizeof(_vh), &_vh);
+		if (!vh)
+			return;
+		proto = vh->h_vlan_encapsulated_proto;
+		nhoff += sizeof(*vh);
+	}
+
+	if (path_mtu <= ETHERIP6_OUTER_HLEN + nhoff)
+		return;
+	inner_mtu = min_t(unsigned int, skb->dev->mtu,
+			  path_mtu - ETHERIP6_OUTER_HLEN - nhoff);
+
+	if (proto == htons(ETH_P_IP)) {
+		struct iphdr _iph, *iph;
+
+		iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
+		if (!iph || iph->version != 4 || iph->ihl < 5 ||
+		    iph->protocol != IPPROTO_TCP ||
+		    (iph->frag_off & htons(IP_MF | IP_OFFSET)))
+			return;
+		thoff = nhoff + iph->ihl * 4;
+		min_ip_hlen = sizeof(struct iphdr);
+	} else if (proto == htons(ETH_P_IPV6)) {
+		struct ipv6hdr _ip6h, *ip6h;
+		__be16 frag_off = 0;
+		int offset;
+
+		ip6h = skb_header_pointer(skb, nhoff, sizeof(_ip6h), &_ip6h);
+		if (!ip6h || ip6h->version != 6)
+			return;
+		nexthdr = ip6h->nexthdr;
+		offset = ipv6_skip_exthdr(skb, nhoff + sizeof(*ip6h),
+				     &nexthdr, &frag_off);
+		if (offset < 0 || nexthdr != IPPROTO_TCP || frag_off)
+			return;
+		thoff = offset;
+		min_ip_hlen = sizeof(struct ipv6hdr);
+	} else {
+		return;
+	}
+
+	th = skb_header_pointer(skb, thoff, sizeof(_th), &_th);
+	if (!th || !th->syn || th->doff < sizeof(*th) / 4)
+		return;
+	tcp_hlen = th->doff * 4;
+	if (inner_mtu <= min_ip_hlen + sizeof(*th))
+		return;
+	new_mss = min_t(unsigned int, U16_MAX,
+			inner_mtu - min_ip_hlen - sizeof(*th));
+
+	if (skb_ensure_writable(skb, thoff + tcp_hlen))
+		return;
+	th = (struct tcphdr *)(skb->data + thoff);
+	opt = (unsigned char *)(th + 1);
+	optlen = tcp_hlen - sizeof(*th);
+
+	while (optlen) {
+		u8 kind = opt[0];
+		u8 len;
+
+		if (kind == TCPOPT_EOL)
+			return;
+		if (kind == TCPOPT_NOP) {
+			opt++;
+			optlen--;
+			continue;
+		}
+		if (optlen < 2 || (len = opt[1]) < 2 || len > optlen)
+			return;
+		if (kind == TCPOPT_MSS && len == TCPOLEN_MSS) {
+			old_mss = get_unaligned_be16(opt + 2);
+			if (old_mss > new_mss) {
+				put_unaligned_be16(new_mss, opt + 2);
+				inet_proto_csum_replace2(&th->check, skb,
+						 htons(old_mss), htons(new_mss), false);
+			}
+			return;
+		}
+		opt += len;
+		optlen -= len;
+	}
+}
+
 static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct etherip6_tunnel *tun = netdev_priv(dev);
@@ -166,6 +279,8 @@ static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 		dst_release(dst);
 		goto tx_error;
 	}
+
+	etherip6_clamp_tcp_mss(skb, dst_mtu(dst));
 
 	headroom = LL_RESERVED_SPACE(dst->dev) + sizeof(*ip6h) + ETHERIP6_HLEN;
 	err = skb_cow_head(skb, headroom);

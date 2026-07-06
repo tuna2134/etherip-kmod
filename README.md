@@ -37,6 +37,10 @@ sudo ip link set eip0 up
 sudo ip addr add 192.0.2.1/30 dev eip0
 ```
 
+TCP SYN に MSS オプションがある場合、外側 IPv6 経路の MTU を超えないよう、
+送信時に IPv4/IPv6 の MSS を自動的に縮小します。802.1Q/802.1ad VLAN と IPv6
+拡張ヘッダーにも対応します。既に十分小さい MSS は変更しません。
+
 ## トンネルの削除
 
 ```sh
