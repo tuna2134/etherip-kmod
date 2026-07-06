@@ -33,7 +33,6 @@
 #define ETHERIP6_DEFAULT_HOP_LIMIT 64
 #define ETHERIP6_MAX_MTU 9000
 #define ETHERIP6_ENCAP_HLEN (sizeof(struct ipv6hdr) + ETHERIP6_HLEN)
-#define ETHERIP6_MTU_OVERHEAD (ETHERIP6_ENCAP_HLEN + ETH_HLEN)
 
 struct etherip6_tunnel {
 	struct list_head list;
@@ -142,35 +141,6 @@ static struct etherip6_tunnel *etherip6_lookup_rx(struct net *net,
 	return etherip6_lookup_unique_rx(net, local, remote, iif, false, false);
 }
 
-static unsigned int etherip6_underlay_mtu(struct net *net,
-					  const struct etherip6_tunnel *tun)
-{
-	struct dst_entry *dst;
-	struct flowi6 fl6 = {};
-	unsigned int mtu = 0;
-
-	fl6.flowi6_proto = IPPROTO_ETHERIP;
-	fl6.flowi6_oif = tun->link;
-	fl6.daddr = tun->remote;
-	fl6.saddr = tun->local;
-
-	dst = ip6_route_output(net, NULL, &fl6);
-	if (!dst->error)
-		mtu = dst_mtu(dst);
-	dst_release(dst);
-
-	return mtu;
-}
-
-static unsigned int etherip6_overlay_mtu(unsigned int underlay_mtu)
-{
-	if (underlay_mtu <= ETHERIP6_MTU_OVERHEAD + ETH_MIN_MTU)
-		return ETH_MIN_MTU;
-
-	return min_t(unsigned int, underlay_mtu - ETHERIP6_MTU_OVERHEAD,
-		     ETHERIP6_MAX_MTU);
-}
-
 static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct etherip6_tunnel *tun = netdev_priv(dev);
@@ -222,8 +192,15 @@ static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	skb->protocol = htons(ETH_P_IPV6);
 	skb->dev = dst->dev;
-	/* IPv6 source fragmentation is needed only above the underlay PMTU. */
-	skb->ignore_df = skb->len > dst_mtu(dst);
+	/*
+	 * This skb used to contain an inner Ethernet frame.  Clear its control
+	 * block before handing it to IPv6, then pin source fragmentation to the
+	 * current underlay PMTU.  ip6_local_out() adds the Fragment Header and
+	 * splits oversized packets in ip6_finish_output().
+	 */
+	memset(IP6CB(skb), 0, sizeof(*IP6CB(skb)));
+	IP6CB(skb)->frag_max_size = dst_mtu(dst);
+	skb->ignore_df = 1;
 	skb_dst_set(skb, dst);
 
 	stats = this_cpu_ptr(tun->stats);
@@ -349,15 +326,6 @@ static int etherip6_newlink(struct net_device *dev,
 	     ipv6_addr_type(&tun->remote) & IPV6_ADDR_LINKLOCAL) && !tun->link) {
 		NL_SET_ERR_MSG(extack, "link-local endpoint requires link");
 		return -EINVAL;
-	}
-
-	/* Keep the default overlay packets below the current underlay PMTU. */
-	if (!params->tb[IFLA_MTU]) {
-		unsigned int underlay_mtu;
-
-		underlay_mtu = etherip6_underlay_mtu(dev_net(dev), tun);
-		if (underlay_mtu)
-			dev->mtu = etherip6_overlay_mtu(underlay_mtu);
 	}
 
 	tun->dev = dev;
