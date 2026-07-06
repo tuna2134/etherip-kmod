@@ -309,6 +309,15 @@ static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 	skb->ignore_df = 1;
 	skb_dst_set(skb, dst);
 
+	/*
+	 * skb->cb belongs to the protocol currently processing the skb.  The
+	 * encapsulated frame may leave bridge, qdisc, or inner IPv6 state in it;
+	 * in particular, stale inet6_skb_parm flags or frag_max_size corrupt the
+	 * outer IPv6 fragmentation path.  Native IPv6 tunnels clear this state
+	 * in ip6tunnel_xmit() before calling ip6_local_out().
+	 */
+	memset(skb->cb, 0, sizeof(struct inet6_skb_parm));
+
 	stats = this_cpu_ptr(tun->stats);
 	u64_stats_update_begin(&stats->syncp);
 	u64_stats_inc(&stats->tx_packets);
