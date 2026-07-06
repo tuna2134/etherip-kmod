@@ -10,11 +10,6 @@ all: module tools
 module:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
-tools: etherip6ctl
-
-etherip6ctl: etherip6ctl.c etherip6_uapi.h
-	$(CC) $(CFLAGS) -Wall -Wextra -O2 -o $@ etherip6ctl.c
-
 clean:
 	@if [ -d "$(KDIR)" ]; then \
 		$(MAKE) -C "$(KDIR)" M="$(PWD)" clean; \
