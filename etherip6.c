@@ -263,6 +263,7 @@ static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct pcpu_sw_netstats *stats;
 	__be16 *etherip;
 	unsigned int payload_len;
+	unsigned int inner_len;
 	int headroom;
 	int err;
 
@@ -290,6 +291,7 @@ static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	payload_len = skb->len + ETHERIP6_HLEN;
+	inner_len = skb->len;
 
 	etherip = skb_push(skb, ETHERIP6_HLEN);
 	*etherip = ETHERIP6_HDR;
@@ -318,13 +320,19 @@ static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 	 */
 	memset(skb->cb, 0, sizeof(struct inet6_skb_parm));
 
+	err = ip6_local_out(net, NULL, skb);
+	if (unlikely(net_xmit_eval(err))) {
+		atomic_long_inc(&tun->tx_dropped);
+		return NETDEV_TX_OK;
+	}
+
 	stats = this_cpu_ptr(tun->stats);
 	u64_stats_update_begin(&stats->syncp);
 	u64_stats_inc(&stats->tx_packets);
-	u64_stats_add(&stats->tx_bytes, payload_len - ETHERIP6_HLEN);
+	u64_stats_add(&stats->tx_bytes, inner_len);
 	u64_stats_update_end(&stats->syncp);
 
-	return ip6_local_out(net, NULL, skb) == 0 ? NETDEV_TX_OK : NETDEV_TX_OK;
+	return NETDEV_TX_OK;
 
 tx_error:
 	atomic_long_inc(&tun->tx_dropped);
