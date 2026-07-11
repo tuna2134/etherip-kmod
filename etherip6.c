@@ -15,6 +15,7 @@
 #include <linux/rculist.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
+#include <linux/tcp.h>
 #include <net/ip.h>
 #include <net/ip6_route.h>
 #include <net/ipv6.h>
@@ -157,8 +158,22 @@ static netdev_tx_t etherip6_xmit(struct sk_buff *skb, struct net_device *dev)
 	int headroom;
 	int err;
 	struct sk_buff *segs, *next;
+	unsigned int gso_limit;
 
 	if (skb_is_gso(skb)) {
+		/*
+		 * GSO is performed before EtherIP/IPv6 encapsulation.  Limit the
+		 * TCP payload according to the configured inner MTU; this preserves
+		 * both 1500-byte and jumbo-frame tunnel configurations.
+		 */
+		gso_limit = max_t(unsigned int, dev->mtu,
+			ETH_HLEN + ETHERIP6_HLEN + sizeof(struct ipv6hdr) +
+			sizeof(struct tcphdr)) - ETH_HLEN - ETHERIP6_HLEN -
+			(skb->protocol == htons(ETH_P_IPV6) ?
+			 sizeof(struct ipv6hdr) : sizeof(struct iphdr)) -
+			 sizeof(struct tcphdr);
+		if (skb_shinfo(skb)->gso_size > gso_limit)
+			skb_shinfo(skb)->gso_size = gso_limit;
 		segs = skb_gso_segment(skb, 0);
 		if (IS_ERR(segs))
 			goto tx_error;
