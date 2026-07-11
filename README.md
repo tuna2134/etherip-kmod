@@ -37,6 +37,10 @@ sudo ip link set eip0 up
 sudo ip addr add 192.0.2.1/30 dev eip0
 ```
 
+TCP SYN に MSS オプションがある場合は、外側 IPv6 経路 MTU とトンネル MTU の
+小さい方に収まるよう、送信時に MSS を自動的に縮小します。IPv4/IPv6、
+802.1Q/802.1ad VLAN、IPv6 拡張ヘッダーに対応し、既に小さい MSS は変更しません。
+
 ## MTU と IPv6 フラグメント
 
 EtherIP over IPv6 では、内側 Ethernet ヘッダー 14 bytes、EtherIP ヘッダー
@@ -63,7 +67,8 @@ sudo sysctl -w net.ipv6.ip6frag_time=10
 この設定は経路上でのフラグメント欠落を防ぐものではありません。フラグメントを
 避けるには、外側インターフェースと経路の MTU を 1556 以上にするか、`eip0` の
 MTU を外側 MTU から 56 引いた値以下（外側 MTU 1500 なら 1444 以下）に設定して
-ください。
+ください。TCP は上記の MSS clamping でフラグメントを回避できますが、TCP 以外の
+Ethernet フレームには適用されません。
 
 ## トンネルの削除
 
